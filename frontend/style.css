@@ -1,0 +1,106 @@
+/* style.css */
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Segoe UI", Arial, sans-serif;
+  background: #f4f4f4;
+  color: #222;
+  padding: 24px;
+}
+
+h1 { font-size: 1.35rem; margin-bottom: 4px; }
+.subtitle { color: #777; margin-bottom: 16px; }
+
+.controls { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; flex-wrap: wrap; }
+button {
+  background: #1976d2;
+  color: white;
+  border: 0;
+  padding: 10px 18px;
+  border-radius: 8px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+button:disabled { background: #999; }
+#status { font-weight: 600; }
+#timer { font-family: Consolas, monospace; }
+.progress-wrap { width: 220px; height: 10px; background: #ddd; border-radius: 5px; overflow: hidden; }
+#progressBar { height: 100%; width: 0; background: #1976d2; transition: width 0.2s; }
+
+.stage { display: grid; grid-template-columns: 1.1fr 1fr 1.2fr 1.1fr; gap: 14px; align-items: start; }
+.panel { background: white; border-radius: 10px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+.panel h2 { font-size: 0.95rem; margin-bottom: 8px; }
+.panel h2 small { color: #999; font-weight: normal; }
+.hint { font-size: 0.75rem; color: #999; margin-bottom: 8px; }
+
+/* matrix A and the result: one strip per task */
+.row-grid { display: flex; flex-direction: column; gap: 3px; margin-bottom: 14px; }
+.strip { height: 9px; border-radius: 3px; background: #ddd; transition: background 0.3s, opacity 0.3s; }
+.strip.working { animation: blink 0.8s infinite; }
+.strip.done { opacity: 0.35; }
+@keyframes blink { 50% { opacity: 0.4; } }
+
+/* matrix B is just shown as a 10x10 picture */
+.cell-grid { display: grid; grid-template-columns: repeat(10, 1fr); gap: 2px; }
+.cell { aspect-ratio: 1; background: #ccc; border-radius: 2px; }
+
+/* the task queue inside the scheduler box */
+.task-queue { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  font-size: 0.7rem;
+  font-family: Consolas, monospace;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #fafafa;
+  border: 2px solid #bbb;
+}
+.chip.taken { opacity: 0.45; }
+.chip.done { opacity: 0.2; text-decoration: line-through; }
+
+/* thread cards */
+.thread-card {
+  border: 1px solid #ddd;
+  border-left: 5px solid #ccc;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.thread-name { font-weight: 600; display: flex; align-items: center; gap: 7px; }
+.dot { width: 10px; height: 10px; border-radius: 50%; }
+.thread-status { font-size: 0.78rem; color: #555; margin: 4px 0; }
+.thread-done { display: flex; flex-wrap: wrap; gap: 4px; min-height: 12px; }
+.mini-chip { width: 14px; height: 10px; border-radius: 2px; }
+
+/* the chip that flies from the scheduler to a thread */
+.fly-chip {
+  position: fixed;
+  z-index: 10;
+  color: white;
+  font-size: 0.7rem;
+  padding: 3px 7px;
+  border-radius: 999px;
+  transition: transform 0.45s ease, opacity 0.45s ease;
+}
+
+/* summary shown at the end */
+.final-info { border-top: 1px dashed #ddd; padding-top: 10px; font-size: 0.85rem; }
+.final-info table { border-collapse: collapse; margin-top: 6px; font-family: Consolas, monospace; font-size: 0.75rem; }
+.final-info td { border: 1px solid #ddd; padding: 3px 6px; }
+.badge {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 0.78rem;
+  margin-bottom: 8px;
+}
+.badge.ok { background: #d4edda; color: #155724; }
+.badge.bad { background: #f8d7da; color: #721c24; }
+
+.hidden { display: none; }
+.legend { margin-top: 14px; color: #777; font-size: 0.8rem; }
+
+@media (max-width: 1100px) {
+  .stage { grid-template-columns: 1fr 1fr; }
+}

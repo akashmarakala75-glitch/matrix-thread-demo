@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Matrix Multiplication with Threads</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <h1>100 x 100 Matrix Multiplication with Threads + TensorFlow</h1>
+  <p class="subtitle">The scheduler splits the rows of Matrix A into tasks and 4 worker
+  threads calculate them with TensorFlow. This page shows the progress live.</p>
+
+  <div class="controls">
+    <button id="startBtn">Start multiplication</button>
+    <div class="progress-wrap"><div id="progressBar"></div></div>
+    <span id="progressText">0 / 100 rows</span>
+    <span id="status">idle</span>
+    <span id="timer"></span>
+  </div>
+
+  <div class="stage">
+    <div class="panel">
+      <h2>Matrix A <small>100x100</small></h2>
+      <div id="matrixA" class="row-grid"></div>
+      <h2>Matrix B <small>100x100</small></h2>
+      <div id="matrixB" class="cell-grid"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Scheduler</h2>
+      <p class="hint">task queue (1 task = 5 rows of A)</p>
+      <div id="taskQueue" class="task-queue"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Worker threads</h2>
+      <div id="threads"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Result = A x B <small>100x100</small></h2>
+      <div id="matrixR" class="row-grid"></div>
+      <div id="finalInfo" class="final-info hidden"></div>
+    </div>
+  </div>
+
+  <p class="legend">One strip = 5 matrix rows (1 task). The color shows which thread did
+  those rows. The real 100x100 multiplication happens in Python, this page is just a
+  simple view of it.</p>
+
+  <script src="script.js"></script>
+</body>
+</html>
