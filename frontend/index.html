@@ -1,14 +1,15 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Matrix Multiplication with Threads</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
   <h1>100 x 100 Matrix Multiplication with Threads + TensorFlow</h1>
-  <p class="subtitle">The scheduler splits the rows of Matrix A into tasks and 4 worker
-  threads calculate them with TensorFlow. This page shows the progress live.</p>
+  <p class="subtitle">The scheduler divides Matrix A into small row groups, then four
+  worker threads process them with TensorFlow. Follow each task as it moves.</p>
 
   <div class="controls">
     <button id="startBtn">Start multiplication</button>
@@ -28,7 +29,7 @@
 
     <div class="panel">
       <h2>Scheduler</h2>
-      <p class="hint">task queue (1 task = 5 rows of A)</p>
+      <p class="hint">Task queue (one task = five rows of A)</p>
       <div id="taskQueue" class="task-queue"></div>
     </div>
 
@@ -44,9 +45,9 @@
     </div>
   </div>
 
-  <p class="legend">One strip = 5 matrix rows (1 task). The color shows which thread did
-  those rows. The real 100x100 multiplication happens in Python, this page is just a
-  simple view of it.</p>
+  <p class="legend">Each strip represents one five-row task. Its color identifies the
+  thread that processed it. Python performs the full multiplication; this page visualizes
+  the work as it happens.</p>
 
   <script src="script.js"></script>
 </body>

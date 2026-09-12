@@ -1,168 +1,220 @@
-// script.js - asks the python server for progress every 200 ms and animates it.
-// Matrix A and the result are drawn as 20 strips (1 strip = 1 task = 5 rows).
+const THREAD_COLORS = ["#2196f3", "#4caf50", "#ff9800", "#9c27b0"];
+const POLL_INTERVAL_MS = 200;
 
-const COLORS = ["#2196f3", "#4caf50", "#ff9800", "#9c27b0"]; // one color per thread
-
-function $(id) { return document.getElementById(id); }
+function getElement(id) {
+  return document.getElementById(id);
+}
 
 let pollTimer = null;
-let built = false;     // did we build the strips/cards for this run yet
-let lastStatus = {};   // task id -> status we saw in the previous poll
-let threadColor = {};  // thread name -> color
+let isInterfaceBuilt = false;
+let previousTaskStatuses = {};
+let threadColors = {};
 let startedAt = 0;
 
-// matrix B never changes so just draw a 10x10 block picture for it,
-// and grey placeholder strips for A and the result
-for (let i = 0; i < 100; i++) {
-  $("matrixB").innerHTML += '<div class="cell"></div>';
+for (let cell = 0; cell < 100; cell++) {
+  getElement("matrixB").insertAdjacentHTML("beforeend", '<div class="cell"></div>');
 }
-makeStrips($("matrixA"), 20);
-makeStrips($("matrixR"), 20);
+makeStrips(getElement("matrixA"), 20);
+makeStrips(getElement("matrixR"), 20);
 
-$("startBtn").onclick = async function () {
-  $("startBtn").disabled = true;
-  $("finalInfo").classList.add("hidden");
-  built = false;
-  lastStatus = {};
+getElement("startBtn").addEventListener("click", startDemo);
+
+async function startDemo() {
+  const startButton = getElement("startBtn");
+  startButton.disabled = true;
+  getElement("finalInfo").classList.add("hidden");
+  isInterfaceBuilt = false;
+  previousTaskStatuses = {};
   startedAt = Date.now();
-  $("status").textContent = "running...";
-  await fetch("/api/start");
-  pollTimer = setInterval(poll, 200);
-};
+  getElement("status").textContent = "Starting...";
 
-async function poll() {
-  const res = await fetch("/api/progress");
-  const data = await res.json();
-  if (data.state === "idle") return; // python is still creating the matrices
-
-  if (!built) buildEverything(data);
-
-  // react to tasks that changed since the last poll
-  for (const task of data.tasks) {
-    const before = lastStatus[task.id] || "pending";
-    if (task.status !== before) {
-      if (task.status === "working") taskStarted(task);
-      if (task.status === "done") {
-        if (before === "pending") taskStarted(task); // we missed the working step
-        taskDone(task);
-      }
-      lastStatus[task.id] = task.status;
-    }
-  }
-
-  // status text on every thread card
-  for (const name in threadColor) {
-    const now = data.tasks.find(t => t.thread === name && t.status === "working");
-    if (now) {
-      $("status-" + name).textContent = "working on rows " + now.start_row + "-" + (now.end_row - 1);
-    } else {
-      $("status-" + name).textContent = data.state === "done" ? "finished" : "waiting...";
-    }
-  }
-
-  $("progressBar").style.width = (100 * data.rows_done / data.total_rows) + "%";
-  $("progressText").textContent = data.rows_done + " / " + data.total_rows + " rows";
-  const secs = data.state === "done" ? data.total_time : (Date.now() - startedAt) / 1000;
-  $("timer").textContent = secs.toFixed(1) + " s";
-
-  // finished? stop polling and show the summary
-  if (data.state === "done" && data.verified !== null) {
+  try {
+    const response = await fetch("/api/start");
+    if (!response.ok) throw new Error(`Server returned ${response.status}`);
     clearInterval(pollTimer);
-    showSummary(data);
+    pollTimer = setInterval(updateProgress, POLL_INTERVAL_MS);
+  } catch (error) {
+    showRequestError(error);
   }
 }
 
-function buildEverything(data) {
-  $("matrixA").innerHTML = "";
-  $("matrixR").innerHTML = "";
-  $("taskQueue").innerHTML = "";
-  $("threads").innerHTML = "";
-  threadColor = {};
+async function updateProgress() {
+  try {
+    const response = await fetch("/api/progress");
+    if (!response.ok) throw new Error(`Server returned ${response.status}`);
+    const progress = await response.json();
+    if (progress.state === "idle") return;
 
-  // a strip in A, a strip in the result and a queue chip for every task
-  for (const task of data.tasks) {
-    const label = task.start_row + "-" + (task.end_row - 1);
-    $("matrixA").innerHTML += '<div class="strip" id="a-' + task.id + '"></div>';
-    $("matrixR").innerHTML += '<div class="strip" id="r-' + task.id + '"></div>';
-    $("taskQueue").innerHTML += '<span class="chip" id="chip-' + task.id + '">' + label + "</span>";
-  }
+    if (!isInterfaceBuilt) buildInterface(progress);
 
-  // a card for every thread
-  for (let i = 0; i < data.num_threads; i++) {
-    const name = "Thread-" + (i + 1);
-    threadColor[name] = COLORS[i % COLORS.length];
-    $("threads").innerHTML +=
-      '<div class="thread-card" id="card-' + name + '" style="border-left-color:' + threadColor[name] + '">' +
-      '<div class="thread-name"><span class="dot" style="background:' + threadColor[name] + '"></span>' + name + "</div>" +
-      '<div class="thread-status" id="status-' + name + '">waiting...</div>' +
-      '<div class="thread-done" id="done-' + name + '"></div></div>';
+    for (const task of progress.tasks) {
+      const previousStatus = previousTaskStatuses[task.id] || "pending";
+      if (task.status !== previousStatus) {
+        if (task.status === "working") markTaskStarted(task);
+        if (task.status === "done") {
+          if (previousStatus === "pending") markTaskStarted(task);
+          markTaskDone(task);
+        }
+        previousTaskStatuses[task.id] = task.status;
+      }
+    }
+
+    updateThreadStatuses(progress);
+    updateOverallProgress(progress);
+
+    if (progress.state === "done" && progress.verified !== null) {
+      clearInterval(pollTimer);
+      showSummary(progress);
+    }
+  } catch (error) {
+    showRequestError(error);
   }
-  built = true;
 }
 
-// a thread took a task -> color the strip in A and fly a chip to the thread
-function taskStarted(task) {
-  const color = threadColor[task.thread];
-  const strip = $("a-" + task.id);
+function updateThreadStatuses(progress) {
+  for (const threadName in threadColors) {
+    const activeTask = progress.tasks.find(
+      task => task.thread === threadName && task.status === "working"
+    );
+    const statusElement = getElement(`status-${threadName}`);
+
+    statusElement.textContent = activeTask
+      ? `Working on rows ${activeTask.start_row}-${activeTask.end_row - 1}`
+      : progress.state === "done" ? "Finished" : "Waiting...";
+  }
+}
+
+function updateOverallProgress(progress) {
+  const percentage = 100 * progress.rows_done / progress.total_rows;
+  const elapsedSeconds = progress.state === "done"
+    ? progress.total_time
+    : (Date.now() - startedAt) / 1000;
+
+  getElement("progressBar").style.width = `${percentage}%`;
+  getElement("progressText").textContent = `${progress.rows_done} / ${progress.total_rows} rows`;
+  getElement("timer").textContent = `${elapsedSeconds.toFixed(1)} s`;
+}
+
+function buildInterface(progress) {
+  getElement("matrixA").innerHTML = "";
+  getElement("matrixR").innerHTML = "";
+  getElement("taskQueue").innerHTML = "";
+  getElement("threads").innerHTML = "";
+  threadColors = {};
+
+  for (const task of progress.tasks) {
+    const rowLabel = `${task.start_row}-${task.end_row - 1}`;
+    getElement("matrixA").insertAdjacentHTML(
+      "beforeend", `<div class="strip" id="a-${task.id}"></div>`
+    );
+    getElement("matrixR").insertAdjacentHTML(
+      "beforeend", `<div class="strip" id="r-${task.id}"></div>`
+    );
+    getElement("taskQueue").insertAdjacentHTML(
+      "beforeend", `<span class="chip" id="chip-${task.id}">${rowLabel}</span>`
+    );
+  }
+
+  for (let threadNumber = 1; threadNumber <= progress.num_threads; threadNumber++) {
+    const threadName = `Thread-${threadNumber}`;
+    const color = THREAD_COLORS[(threadNumber - 1) % THREAD_COLORS.length];
+    threadColors[threadName] = color;
+    getElement("threads").insertAdjacentHTML("beforeend", `
+      <div class="thread-card" id="card-${threadName}" style="border-left-color: ${color}">
+        <div class="thread-name">
+          <span class="dot" style="background: ${color}"></span>${threadName}
+        </div>
+        <div class="thread-status" id="status-${threadName}">Waiting...</div>
+        <div class="thread-done" id="done-${threadName}"></div>
+      </div>
+    `);
+  }
+  isInterfaceBuilt = true;
+}
+
+function markTaskStarted(task) {
+  const color = threadColors[task.thread];
+  const strip = getElement(`a-${task.id}`);
   strip.style.background = color;
   strip.classList.add("working");
-  $("chip-" + task.id).classList.add("taken");
-  flyChip($("chip-" + task.id), $("card-" + task.thread), color);
+  getElement(`chip-${task.id}`).classList.add("taken");
+  animateTaskAssignment(
+    getElement(`chip-${task.id}`),
+    getElement(`card-${task.thread}`),
+    color
+  );
 }
 
-// a task is finished -> fill the result strip with the thread's color
-function taskDone(task) {
-  const color = threadColor[task.thread];
-  const stripA = $("a-" + task.id);
-  stripA.classList.remove("working");
-  stripA.classList.add("done");
-  $("r-" + task.id).style.background = color;
-  $("chip-" + task.id).classList.add("done");
-  $("done-" + task.thread).innerHTML += '<span class="mini-chip" style="background:' + color + '"></span>';
+function markTaskDone(task) {
+  const color = threadColors[task.thread];
+  const inputStrip = getElement(`a-${task.id}`);
+  inputStrip.classList.remove("working");
+  inputStrip.classList.add("done");
+  getElement(`r-${task.id}`).style.background = color;
+  getElement(`chip-${task.id}`).classList.add("done");
+  getElement(`done-${task.thread}`).insertAdjacentHTML(
+    "beforeend", `<span class="mini-chip" style="background: ${color}"></span>`
+  );
 }
 
-// a little chip flies from the scheduler box to the thread card
-function flyChip(fromEl, toEl, color) {
-  const a = fromEl.getBoundingClientRect();
-  const b = toEl.getBoundingClientRect();
-  const fly = document.createElement("span");
-  fly.className = "fly-chip";
-  fly.textContent = fromEl.textContent;
-  fly.style.background = color;
-  fly.style.left = a.left + "px";
-  fly.style.top = a.top + "px";
-  document.body.appendChild(fly);
-  setTimeout(function () { // small delay so the browser animates the move
-    fly.style.transform = "translate(" + (b.left - a.left + 10) + "px," + (b.top - a.top + 15) + "px)";
-    fly.style.opacity = "0.2";
+function animateTaskAssignment(source, destination, color) {
+  const sourcePosition = source.getBoundingClientRect();
+  const destinationPosition = destination.getBoundingClientRect();
+  const movingChip = document.createElement("span");
+  movingChip.className = "fly-chip";
+  movingChip.textContent = source.textContent;
+  movingChip.style.background = color;
+  movingChip.style.left = `${sourcePosition.left}px`;
+  movingChip.style.top = `${sourcePosition.top}px`;
+  document.body.appendChild(movingChip);
+
+  setTimeout(() => {
+    const horizontalDistance = destinationPosition.left - sourcePosition.left + 10;
+    const verticalDistance = destinationPosition.top - sourcePosition.top + 15;
+    movingChip.style.transform = `translate(${horizontalDistance}px, ${verticalDistance}px)`;
+    movingChip.style.opacity = "0.2";
   }, 20);
-  setTimeout(function () { fly.remove(); }, 600);
+  setTimeout(() => movingChip.remove(), 600);
 }
 
 function showSummary(data) {
-  $("startBtn").disabled = false;
-  $("startBtn").textContent = "Run again";
-  $("status").textContent = data.verified ? "done - result verified" : "done - WRONG RESULT";
+  const startButton = getElement("startBtn");
+  startButton.disabled = false;
+  startButton.textContent = "Run again";
+  getElement("status").textContent = data.verified
+    ? "Done - result verified"
+    : "Done - verification failed";
 
-  let rows = "";
-  for (const r of data.sample) {
-    rows += "<tr>";
-    for (const v of r) rows += "<td>" + v + "</td>";
-    rows += "<td>...</td></tr>";
+  let tableRows = "";
+  for (const row of data.sample) {
+    tableRows += "<tr>";
+    for (const value of row) tableRows += `<td>${value}</td>`;
+    tableRows += "<td>...</td></tr>";
   }
-  rows += "<tr><td>...</td><td>...</td><td>...</td><td>...</td><td>...</td></tr>";
+  tableRows += "<tr><td>...</td><td>...</td><td>...</td><td>...</td><td>...</td></tr>";
 
-  $("finalInfo").innerHTML =
-    '<div class="badge ' + (data.verified ? "ok" : "bad") + '">' +
-    (data.verified ? "Correct: same answer as one big tf.matmul" : "Verification failed") + "</div>" +
-    "<p>Total time: <b>" + data.total_time.toFixed(2) + " s</b> (includes the demo delays)<br>" +
-    "Pure TensorFlow time: <b>" + data.compute_time + " ms</b></p>" +
-    "<p>Top left corner of the result:</p><table>" + rows + "</table>";
-  $("finalInfo").classList.remove("hidden");
+  const summary = getElement("finalInfo");
+  summary.innerHTML = `
+    <div class="badge ${data.verified ? "ok" : "bad"}">
+      ${data.verified ? "Correct: matches a single tf.matmul" : "Verification failed"}
+    </div>
+    <p>Total time: <b>${data.total_time.toFixed(2)} s</b> (includes demo delays)<br>
+    TensorFlow time: <b>${data.compute_time} ms</b></p>
+    <p>Top-left corner of the result:</p>
+    <table>${tableRows}</table>
+  `;
+  summary.classList.remove("hidden");
 }
 
-function makeStrips(container, n) {
-  for (let i = 0; i < n; i++) {
-    container.innerHTML += '<div class="strip"></div>';
+function showRequestError(error) {
+  clearInterval(pollTimer);
+  getElement("status").textContent = "Could not reach the server";
+  getElement("startBtn").disabled = false;
+  console.error(error);
+}
+
+function makeStrips(container, count) {
+  for (let strip = 0; strip < count; strip++) {
+    container.insertAdjacentHTML("beforeend", '<div class="strip"></div>');
   }
 }

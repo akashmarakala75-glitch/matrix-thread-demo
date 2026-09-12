@@ -1,7 +1,3 @@
-# scheduler.py - the scheduler and the worker threads
-# the scheduler cuts matrix A into row tasks and the threads take them
-# from a queue one by one until nothing is left
-
 import queue
 import threading
 import time
@@ -11,89 +7,111 @@ import numpy as np
 import matrix
 
 NUM_THREADS = 4
-ROWS_PER_TASK = 5  # 100 rows / 5 = 20 tasks
-DEMO_DELAY = 0.5   # pause after each task so the animation is visible (0 = full speed)
+ROWS_PER_TASK = 5
+DEMO_DELAY = 0.5
 
 
 class Scheduler:
+    """Split matrix multiplication into row blocks shared by worker threads."""
 
-    def __init__(self, A, B):
-        self.A = A
-        self.B = B
-        self.result = np.zeros((A.shape[0], B.shape[1]), dtype=np.float32)
+    def __init__(self, matrix_a: np.ndarray, matrix_b: np.ndarray):
+        self.matrix_a = matrix_a
+        self.matrix_b = matrix_b
+        self.result = np.zeros(
+            (matrix_a.shape[0], matrix_b.shape[1]), dtype=np.float32
+        )
 
-        # make the task list, every task = a range of rows of A
         self.tasks = []
         self.task_queue = queue.Queue()
-        task_id = 0
-        for start in range(0, A.shape[0], ROWS_PER_TASK):
-            end = min(start + ROWS_PER_TASK, A.shape[0])
-            task = {"id": task_id, "start_row": start, "end_row": end,
-                    "status": "pending", "thread": None}
+        row_ranges = range(0, matrix_a.shape[0], ROWS_PER_TASK)
+        for task_id, start_row in enumerate(row_ranges):
+            end_row = min(start_row + ROWS_PER_TASK, matrix_a.shape[0])
+            task = {
+                "id": task_id,
+                "start_row": start_row,
+                "end_row": end_row,
+                "status": "pending",
+                "thread": None,
+            }
             self.tasks.append(task)
             self.task_queue.put(task)
-            task_id += 1
 
-        self.lock = threading.Lock()
+        self.progress_lock = threading.Lock()
         self.state = "idle"
         self.rows_done = 0
         self.total_time = 0
         self.compute_time = 0
-        print("Scheduler: made", len(self.tasks), "tasks for", NUM_THREADS, "threads")
+        print(
+            f"Scheduler: created {len(self.tasks)} tasks for {NUM_THREADS} threads"
+        )
 
-    def worker(self, name):
-        # this runs inside every thread, keeps taking tasks until none are left
+    def worker(self, thread_name: str) -> None:
+        """Process queued row blocks until no tasks remain."""
         while True:
             try:
                 task = self.task_queue.get_nowait()
             except queue.Empty:
-                break  # no more tasks, this thread is done
+                return
 
-            task["status"] = "working"
-            task["thread"] = name
-            print(" ", name, "doing rows", task["start_row"], "to", task["end_row"] - 1)
+            with self.progress_lock:
+                task["status"] = "working"
+                task["thread"] = thread_name
+            print(
+                f"  {thread_name} is processing rows "
+                f"{task['start_row']} to {task['end_row'] - 1}"
+            )
 
-            # the actual multiplication of these rows (tensorflow)
-            t0 = time.time()
-            block = matrix.multiply_rows(self.A, self.B, task["start_row"], task["end_row"])
-            t1 = time.time()
+            compute_started_at = time.perf_counter()
+            row_block = matrix.multiply_rows(
+                self.matrix_a,
+                self.matrix_b,
+                task["start_row"],
+                task["end_row"],
+            )
+            compute_duration = time.perf_counter() - compute_started_at
 
-            # put the rows into the result (every task has different rows so this is safe)
-            self.result[task["start_row"]:task["end_row"]] = block
+            self.result[task["start_row"]:task["end_row"]] = row_block
 
-            time.sleep(DEMO_DELAY)  # just so humans can watch the animation
+            time.sleep(DEMO_DELAY)
 
-            with self.lock:  # lock because all threads update these counters
+            with self.progress_lock:
                 task["status"] = "done"
                 self.rows_done += task["end_row"] - task["start_row"]
-                self.compute_time += t1 - t0
+                self.compute_time += compute_duration
 
-    def run(self):
+    def run(self) -> None:
+        """Run all workers and wait for the complete result."""
         self.state = "running"
-        start = time.time()
+        started_at = time.perf_counter()
 
         threads = []
-        for i in range(NUM_THREADS):
-            t = threading.Thread(target=self.worker, args=("Thread-" + str(i + 1),))
-            threads.append(t)
-            t.start()
+        for thread_number in range(1, NUM_THREADS + 1):
+            worker_thread = threading.Thread(
+                target=self.worker,
+                args=(f"Thread-{thread_number}",),
+            )
+            threads.append(worker_thread)
+            worker_thread.start()
 
-        for t in threads:
-            t.join()
+        for worker_thread in threads:
+            worker_thread.join()
 
-        self.total_time = time.time() - start
+        self.total_time = time.perf_counter() - started_at
         self.state = "done"
-        print("Scheduler: finished in %.2f s (tensorflow itself took %.1f ms)"
-              % (self.total_time, self.compute_time * 1000))
+        print(
+            f"Scheduler: finished in {self.total_time:.2f} s "
+            f"(TensorFlow took {self.compute_time * 1000:.1f} ms)"
+        )
 
-    def get_progress(self):
-        # everything the web page needs to draw the animation
-        return {
-            "state": self.state,
-            "num_threads": NUM_THREADS,
-            "rows_done": self.rows_done,
-            "total_rows": self.A.shape[0],
-            "tasks": self.tasks,
-            "total_time": round(self.total_time, 3),
-            "compute_time": round(self.compute_time * 1000, 2),  # ms
-        }
+    def get_progress(self) -> dict:
+        """Return a consistent snapshot for the web interface."""
+        with self.progress_lock:
+            return {
+                "state": self.state,
+                "num_threads": NUM_THREADS,
+                "rows_done": self.rows_done,
+                "total_rows": self.matrix_a.shape[0],
+                "tasks": [task.copy() for task in self.tasks],
+                "total_time": round(self.total_time, 3),
+                "compute_time": round(self.compute_time * 1000, 2),
+            }
