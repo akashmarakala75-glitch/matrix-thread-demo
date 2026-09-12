@@ -1,190 +1,151 @@
-"""Threaded matrix multiplication with TensorFlow and Matplotlib animation."""
-
 import os
-
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
-import threading
 import time
+import threading
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
+import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, PillowWriter
 
-
-MINIMUM_SIZE = 100
+MIN_SIZE = 100
 STEPS_PER_FRAME = 25
 
 
 class ExecutionRecorder:
-    """Safely record the order in which cells finish."""
-
     def __init__(self):
-        self.completed_cells = deque()
+        self.order = deque()
         self.lock = threading.Lock()
 
-    def record(self, row, column):
+    def record(self, i, j):
         with self.lock:
-            self.completed_cells.append((row, column))
+            self.order.append((i, j))
 
 
 class CellComputer:
-    """Calculate one result cell using TensorFlow."""
-
-    def __init__(self, matrix_a, matrix_b, matrix_c, recorder):
-        self.matrix_a = matrix_a
-        self.matrix_b = matrix_b
-        self.matrix_c = matrix_c
+    def __init__(self, A, B, C, recorder):
+        self.rows = tf.unstack(A, axis=0)
+        self.cols = tf.unstack(B, axis=1)
+        self.C = C
         self.recorder = recorder
+        # run once here so tf.function is compiled before threads start
+        self.dot(self.rows[0], self.cols[0])
 
-    def calculate(self, row, column):
-        row_from_a = self.matrix_a[row, :]
-        column_from_b = self.matrix_b[:, column]
-        value = tf.tensordot(row_from_a, column_from_b, axes=1).numpy()
-        self.matrix_c[row, column] = value
-        self.recorder.record(row, column)
-        return row, column
+    @staticmethod
+    @tf.function
+    def dot(row, col):
+        return tf.tensordot(row, col, axes=1)
+
+    def compute(self, i, j):
+        self.C[i][j] = float(self.dot(self.rows[i], self.cols[j]))
+        self.recorder.record(i, j)
 
 
-def read_size(message):
-    """Read a whole number that is at least 100."""
+def ask_size(msg):
     while True:
         try:
-            value = int(input(message))
-            if value < MINIMUM_SIZE:
-                print("Error: the value must be at least 100.")
-            else:
-                return value
+            n = int(input(msg))
         except ValueError:
-            print("Error: please enter a whole number.")
+            print("Please enter a number")
+            continue
+        if n < MIN_SIZE:
+            print("Minimum allowed is", MIN_SIZE)
+            continue
+        return n
 
 
-def multiply_with_threads(matrix_a, matrix_b):
-    """Submit every C[i][j] calculation to a thread pool."""
-    result_rows = matrix_a.shape[0]
-    result_columns = matrix_b.shape[1]
-    matrix_c = np.zeros((result_rows, result_columns), dtype=np.float32)
+def multiply(A, B):
+    rows = A.shape[0]
+    cols = B.shape[1]
+    C = np.zeros((rows, cols), dtype=np.float32)
+
     recorder = ExecutionRecorder()
-    computer = CellComputer(matrix_a, matrix_b, matrix_c, recorder)
-    positions = [
-        (row, column)
-        for row in range(result_rows)
-        for column in range(result_columns)
-    ]
-    worker_count = os.cpu_count() or 4
+    computer = CellComputer(A, B, C, recorder)
 
-    print(f"Scheduler created {len(positions)} cell tasks.")
-    print(f"Thread pool is using {worker_count} worker threads.")
+    tasks = [(i, j) for i in range(rows) for j in range(cols)]
+    workers = os.cpu_count() or 4
+    print("Total tasks:", len(tasks))
+    print("Worker threads:", workers)
 
-    with ThreadPoolExecutor(max_workers=worker_count) as executor:
-        futures = [
-            executor.submit(computer.calculate, row, column)
-            for row, column in positions
-        ]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(computer.compute, i, j) for i, j in tasks]
+        done = 0
+        for f in as_completed(futures):
+            f.result()
+            done += 1
+            if done % 1000 == 0:
+                print("done", done, "/", len(tasks))
 
-        completed = 0
-        for future in as_completed(futures):
-            future.result()
-            completed += 1
-            if completed % 1000 == 0 or completed == len(positions):
-                print(f"Completed {completed} / {len(positions)} cells")
-
-    return matrix_c, list(recorder.completed_cells)
+    return C, list(recorder.order)
 
 
-def create_animation(matrix_a, matrix_b, matrix_c, execution_order, gif_name=None):
-    """Animate completed cells in their recorded threaded execution order."""
-    rows, columns = matrix_c.shape
-    visible_c = np.full((rows, columns), np.nan, dtype=np.float32)
+def animate(A, B, C, order, gif=None):
+    rows, cols = C.shape
+    shown = np.full((rows, cols), np.nan)   # nan = not filled yet
 
-    figure, axes = plt.subplots(1, 3, figsize=(11, 4))
-    figure.suptitle("Threaded Matrix Multiplication using TensorFlow")
+    fig, ax = plt.subplots(1, 3, figsize=(11, 4))
+    fig.suptitle("Matrix multiplication with threads (TensorFlow)")
 
-    axes[0].imshow(matrix_a.numpy(), cmap="Blues", aspect="auto")
-    axes[0].set_title("Matrix A")
-    axes[1].imshow(matrix_b.numpy(), cmap="Greens", aspect="auto")
-    axes[1].set_title("Matrix B")
-    result_image = axes[2].imshow(
-        visible_c,
-        cmap="YlOrRd",
-        aspect="auto",
-        vmin=float(np.min(matrix_c)),
-        vmax=float(np.max(matrix_c)),
-    )
-    axes[2].set_title("Matrix C")
+    ax[0].imshow(A.numpy(), cmap="Blues", aspect="auto")
+    ax[0].set_title("A")
+    ax[1].imshow(B.numpy(), cmap="Greens", aspect="auto")
+    ax[1].set_title("B")
+    img = ax[2].imshow(shown, cmap="YlOrRd", aspect="auto",
+                       vmin=C.min(), vmax=C.max())
+    ax[2].set_title("C = A x B")
 
-    for axis in axes:
-        axis.set_xlabel("Column")
-        axis.set_ylabel("Row")
+    row_line = ax[0].axhline(-1, color="red", lw=2)
+    col_line = ax[1].axvline(-1, color="red", lw=2)
+    label = fig.text(0.5, 0.02, "", ha="center")
 
-    row_marker = axes[0].axhline(-1, color="red", linewidth=2)
-    column_marker = axes[1].axvline(-1, color="red", linewidth=2)
-    progress_text = figure.text(0.5, 0.02, "Completed 0 cells", ha="center")
-    total_frames = (len(execution_order) + STEPS_PER_FRAME - 1) // STEPS_PER_FRAME
+    total = len(order)
+    frames = (total + STEPS_PER_FRAME - 1) // STEPS_PER_FRAME
 
-    def update(frame_number):
-        start = frame_number * STEPS_PER_FRAME
-        end = min(start + STEPS_PER_FRAME, len(execution_order))
+    def update(k):
+        start = k * STEPS_PER_FRAME
+        end = min(start + STEPS_PER_FRAME, total)
+        for i, j in order[start:end]:
+            shown[i][j] = C[i][j]
+        i, j = order[end - 1]
+        row_line.set_ydata([i, i])
+        col_line.set_xdata([j, j])
+        img.set_data(shown)
+        label.set_text(f"{end}/{total} cells done   current: C[{i}][{j}]")
+        return img, row_line, col_line, label
 
-        for row, column in execution_order[start:end]:
-            visible_c[row, column] = matrix_c[row, column]
+    anim = FuncAnimation(fig, update, frames=frames, interval=80,
+                         repeat=False, blit=True)
+    fig.tight_layout(rect=[0, 0.08, 1, 0.92])
 
-        current_row, current_column = execution_order[end - 1]
-        row_marker.set_ydata([current_row, current_row])
-        column_marker.set_xdata([current_column, current_column])
-        result_image.set_data(visible_c)
-        progress_text.set_text(
-            f"Completed {end} / {len(execution_order)} cells  |  "
-            f"Displaying C[{current_row}][{current_column}]"
-        )
-        return result_image, row_marker, column_marker, progress_text
-
-    animation = FuncAnimation(
-        figure,
-        update,
-        frames=total_frames,
-        interval=80,
-        repeat=False,
-        blit=False,
-    )
-    figure.tight_layout(rect=[0, 0.08, 1, 0.92])
-
-    if gif_name:
-        print(f"Saving animation as {gif_name}...")
-        animation.save(gif_name, writer=PillowWriter(fps=12), dpi=70)
-        print("GIF saved.")
+    if gif:
+        print("saving", gif, "...")
+        anim.save(gif, writer=PillowWriter(fps=12), dpi=70)
+        print("saved")
     else:
         plt.show()
-
-    plt.close(figure)
-
-
-def main():
-    rows = read_size("Enter number of rows: ")
-    columns = read_size("Enter number of columns: ")
-
-    print("\nCreating random matrices using TensorFlow...")
-    matrix_a = tf.random.uniform((rows, columns), minval=1, maxval=10)
-    matrix_b = tf.random.uniform((columns, columns), minval=1, maxval=10)
-
-    started_at = time.perf_counter()
-    matrix_c, execution_order = multiply_with_threads(matrix_a, matrix_b)
-    elapsed_time = time.perf_counter() - started_at
-
-    expected = tf.matmul(matrix_a, matrix_b).numpy()
-    print("\nMatrix multiplication completed.")
-    print(f"Execution time: {elapsed_time:.3f} seconds")
-    print(f"Result verified with tf.matmul: {np.allclose(matrix_c, expected)}")
-    print("\nTop-left 3 x 3 portion of Matrix C:")
-    print(matrix_c[:3, :3])
-
-    save_answer = input("\nSave the animation as Matrix_multiplication.gif? (y/n): ")
-    gif_name = "Matrix_multiplication.gif" if save_answer.lower() == "y" else None
-    create_animation(matrix_a, matrix_b, matrix_c, execution_order, gif_name)
+    plt.close(fig)
 
 
 if __name__ == "__main__":
-    main()
+    rows = ask_size("Rows: ")
+    cols = ask_size("Columns: ")
+
+    print("Generating matrices with TensorFlow...")
+    A = tf.random.uniform((rows, cols), 1, 10, dtype=tf.int32)
+    B = tf.random.uniform((cols, cols), 1, 10, dtype=tf.int32)
+
+    t0 = time.perf_counter()
+    C, order = multiply(A, B)
+    t1 = time.perf_counter()
+
+    print("\nFinished in %.3f seconds" % (t1 - t0))
+    ok = np.array_equal(C, tf.matmul(A, B).numpy())
+    print("Matches tf.matmul:", ok)
+    print("Top-left 3x3 of C:")
+    print(C[:3, :3])
+
+    ans = input("\nSave as Matrix_multiplication.gif instead of showing? (y/n): ")
+    animate(A, B, C, order, "Matrix_multiplication.gif" if ans.lower() == "y" else None)

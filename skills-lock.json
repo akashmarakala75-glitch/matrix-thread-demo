@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "not-ai": {
+      "source": "udaysharmadev/Not-Ai",
+      "sourceType": "github",
+      "skillPath": "plugins/not-ai/skills/not-ai/SKILL.md",
+      "computedHash": "dc895019a24b8b08655b65737129b3b705a8d036fe860a7a44286751a1e27e89"
+    }
+  }
+}

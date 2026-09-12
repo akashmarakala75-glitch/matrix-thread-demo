@@ -1,265 +1,160 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Threaded Matrix Multiplication Animation</title>
+  <title>Matrix Multiplication - Threads Demo</title>
   <style>
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      padding: 24px;
-      background: #f4f4f4;
-      color: #222;
-      font-family: "Segoe UI", Arial, sans-serif;
-    }
-    h1 { margin: 0 0 6px; font-size: 1.5rem; text-align: center; }
-    .note { margin: 0 0 16px; text-align: center; color: #666; }
-
-    .controls {
-      display: flex;
-      justify-content: center;
-      align-items: end;
-      gap: 12px;
-      flex-wrap: wrap;
-      margin-bottom: 8px;
-    }
-    label { display: grid; gap: 4px; font-weight: bold; font-size: 0.9rem; }
-    input, select { padding: 7px 9px; font: inherit; border: 1px solid #999; width: 110px; }
-    button {
-      padding: 9px 16px;
-      border: 0;
-      background: #1976d2;
-      color: white;
-      font: bold 0.95rem inherit;
-      cursor: pointer;
-    }
-    button:disabled { background: #999; cursor: default; }
-    #error { min-height: 1.2em; margin: 0 0 12px; text-align: center; color: #b42318; }
-
-    .matrices {
-      display: grid;
-      grid-template-columns: 1fr auto 1fr auto 1fr;
-      align-items: center;
-      gap: 14px;
-      max-width: 1100px;
-      margin: 0 auto;
-    }
-    .panel { text-align: center; }
-    .panel h2 { margin: 0 0 6px; font-size: 1.05rem; }
-    canvas { width: 100%; max-width: 300px; aspect-ratio: 1; border: 1px solid #bbb; background: white; image-rendering: pixelated; }
-    .sym { font-size: 2rem; font-weight: bold; }
-
-    .status {
-      max-width: 1100px;
-      margin: 16px auto 0;
-      padding: 14px 18px;
-      background: white;
-      border-top: 4px solid #1976d2;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-    }
-    .status .line { font: bold 1.1rem Consolas, monospace; margin: 4px 0; }
-    .status .small { color: #666; font-size: 0.9rem; }
-
-    .threads {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 10px;
-      max-width: 1100px;
-      margin: 14px auto 0;
-    }
-    .thread {
-      background: white;
-      border-left: 6px solid #ccc;
-      padding: 10px 12px;
-      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
-      font-family: Consolas, monospace;
-    }
-    .thread b { display: block; margin-bottom: 4px; font-family: "Segoe UI", Arial, sans-serif; }
-    .thread .task { font-size: 1rem; min-height: 1.3em; }
-    .thread .count { color: #666; font-size: 0.85rem; }
-
-    @media (max-width: 800px) {
-      .matrices { grid-template-columns: 1fr; }
-      .sym { text-align: center; }
-      .threads { grid-template-columns: repeat(2, 1fr); }
-    }
+    body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; }
+    h1 { text-align: center; font-size: 22px; margin-bottom: 4px; }
+    .note { text-align: center; color: #666; margin-bottom: 16px; }
+    .controls { text-align: center; margin-bottom: 10px; }
+    .controls input { width: 80px; padding: 6px; margin: 0 8px 0 4px; }
+    .controls button { padding: 7px 16px; background: #1976d2; color: #fff; border: none; cursor: pointer; }
+    .controls button:disabled { background: #999; }
+    #error { text-align: center; color: #c00; min-height: 18px; }
+    .row { display: flex; justify-content: center; align-items: center; gap: 16px; flex-wrap: wrap; }
+    .box { text-align: center; }
+    .box h3 { margin: 0 0 6px; }
+    canvas { width: 280px; height: 280px; border: 1px solid #aaa; background: #fff; image-rendering: pixelated; }
+    .sign { font-size: 32px; font-weight: bold; }
+    .status { max-width: 900px; margin: 16px auto 0; background: #fff; padding: 12px 16px; border-top: 4px solid #1976d2; font-family: Consolas, monospace; }
+    .status small { color: #666; font-family: Arial, sans-serif; }
   </style>
 </head>
 <body>
-  <h1>Matrix Multiplication Using Threads + TensorFlow</h1>
-  <p class="note">Browser demonstration of the algorithm in <strong>matrix_animation.py</strong>: each C[i][j] is one task, worker threads take tasks from the queue.</p>
 
-  <div class="controls">
-    <label>Rows <input id="rows" type="number" min="100" value="100"></label>
-    <label>Columns <input id="cols" type="number" min="100" value="100"></label>
-    <label>Speed
-      <select id="speed">
-        <option value="1">Slow (1 cell/frame)</option>
-        <option value="5">Normal (5 cells/frame)</option>
-        <option value="25" selected>Fast (25 cells/frame)</option>
-      </select>
-    </label>
-    <button id="start">Start</button>
-  </div>
-  <p id="error"></p>
+<h1>Matrix Multiplication using Threads (TensorFlow)</h1>
+<p class="note">Browser demo of matrix_animation.py: every cell C[i][j] is one task (row i of A &middot; column j of B)</p>
 
-  <div class="matrices">
-    <div class="panel"><h2>Matrix A</h2><canvas id="canvasA"></canvas></div>
-    <div class="sym">×</div>
-    <div class="panel"><h2>Matrix B</h2><canvas id="canvasB"></canvas></div>
-    <div class="sym">=</div>
-    <div class="panel"><h2>Matrix C</h2><canvas id="canvasC"></canvas></div>
-  </div>
+<div class="controls">
+  Rows <input id="rows" type="number" value="100" min="100">
+  Columns <input id="cols" type="number" value="100" min="100">
+  <button id="startBtn">Start</button>
+</div>
+<div id="error"></div>
 
-  <div class="status">
-    <div class="line" id="progress">Press Start to create the matrices.</div>
-    <div class="line" id="current"></div>
-    <div class="small">Red horizontal line = row i of A &nbsp;|&nbsp; Red vertical line = column j of B &nbsp;|&nbsp; C fills as tasks finish.</div>
-  </div>
+<div class="row">
+  <div class="box"><h3>A</h3><canvas id="cA"></canvas></div>
+  <div class="sign">&times;</div>
+  <div class="box"><h3>B</h3><canvas id="cB"></canvas></div>
+  <div class="sign">=</div>
+  <div class="box"><h3>C</h3><canvas id="cC"></canvas></div>
+</div>
 
-  <div class="threads" id="threads"></div>
+<div class="status">
+  <div id="progress">Press Start</div>
+  <div id="current"></div>
+  <small>red line on A = current row, red line on B = current column, C gets filled as tasks finish</small>
+</div>
 
-  <script>
-    const THREADS = 4;
-    const COLORS = ["#2196f3", "#4caf50", "#ff9800", "#9c27b0"];
-    const get = id => document.getElementById(id);
+<script>
+var STEPS_PER_FRAME = 25;
 
-    let A, B, C, n, m;          // matrices and sizes (A: n×m, B: m×m, C: n×m)
-    let queue = [];             // scheduler task queue of [i, j]
-    let running = false;
-    let done = 0;
-    let threadCounts = [0, 0, 0, 0];
+var A, B, C, filled;
+var rows, cols;
+var tasks = [];
+var next = 0;
 
-    // Draw a whole matrix as a heatmap on a canvas (one pixel per cell).
-    function drawMatrix(canvas, matrix, rows, cols, shade, mask) {
-      canvas.width = cols;
-      canvas.height = rows;
-      const ctx = canvas.getContext("2d");
-      const img = ctx.createImageData(cols, rows);
-      let max = 0;
-      for (let i = 0; i < rows; i++)
-        for (let j = 0; j < cols; j++) max = Math.max(max, matrix[i][j]);
-      for (let i = 0; i < rows; i++) {
-        for (let j = 0; j < cols; j++) {
-          const p = (i * cols + j) * 4;
-          if (mask && !mask[i][j]) {          // not calculated yet → white
-            img.data[p] = img.data[p + 1] = img.data[p + 2] = 255;
-          } else {
-            const t = max ? matrix[i][j] / max : 0;
-            img.data[p] = Math.round(255 - t * (255 - shade[0]));
-            img.data[p + 1] = Math.round(255 - t * (255 - shade[1]));
-            img.data[p + 2] = Math.round(255 - t * (255 - shade[2]));
-          }
-          img.data[p + 3] = 255;
-        }
+function randMatrix(r, c) {
+  var m = [];
+  for (var i = 0; i < r; i++) {
+    m.push([]);
+    for (var j = 0; j < c; j++) m[i].push(1 + Math.floor(Math.random() * 9));
+  }
+  return m;
+}
+
+function draw(canvas, m, r, c, rgb, max, mask) {
+  canvas.width = c;
+  canvas.height = r;
+  var ctx = canvas.getContext("2d");
+  var img = ctx.createImageData(c, r);
+  var d = img.data;
+  for (var i = 0; i < r; i++) {
+    for (var j = 0; j < c; j++) {
+      var p = (i * c + j) * 4;
+      if (mask && !mask[i][j]) {
+        d[p] = d[p + 1] = d[p + 2] = 255;       // not computed yet -> white
+      } else {
+        var t = m[i][j] / max;
+        d[p]     = 255 - t * (255 - rgb[0]);
+        d[p + 1] = 255 - t * (255 - rgb[1]);
+        d[p + 2] = 255 - t * (255 - rgb[2]);
       }
-      ctx.putImageData(img, 0, 0);
+      d[p + 3] = 255;
     }
+  }
+  ctx.putImageData(img, 0, 0);
+}
 
-    function drawMarker(canvas, matrix, rows, cols, shade, i, j, horizontal) {
-      drawMatrix(canvas, matrix, rows, cols, shade);
-      const ctx = canvas.getContext("2d");
-      ctx.fillStyle = "rgba(220, 0, 0, 0.9)";
-      if (horizontal) ctx.fillRect(0, i, cols, 1); else ctx.fillRect(j, 0, 1, rows);
-    }
+function redLine(canvas, index, horizontal) {
+  var ctx = canvas.getContext("2d");
+  ctx.fillStyle = "red";
+  if (horizontal) ctx.fillRect(0, index, canvas.width, 1);
+  else ctx.fillRect(index, 0, 1, canvas.height);
+}
 
-    function randomMatrix(rows, cols) {
-      const out = [];
-      for (let i = 0; i < rows; i++) {
-        const row = [];
-        for (let j = 0; j < cols; j++) row.push(1 + Math.floor(Math.random() * 9));
-        out.push(row);
-      }
-      return out;
-    }
+function computeCell(i, j) {
+  var sum = 0;
+  for (var k = 0; k < cols; k++) sum += A[i][k] * B[k][j];
+  C[i][j] = sum;
+}
 
-    function buildThreadBoxes() {
-      get("threads").innerHTML = "";
-      for (let t = 0; t < THREADS; t++) {
-        get("threads").insertAdjacentHTML("beforeend", `
-          <div class="thread" style="border-left-color:${COLORS[t]}">
-            <b>Worker Thread ${t}</b>
-            <div class="task" id="task-${t}">idle</div>
-            <div class="count" id="count-${t}">0 tasks done</div>
-          </div>`);
-      }
-    }
+function frame() {
+  var i, j;
+  for (var s = 0; s < STEPS_PER_FRAME && next < tasks.length; s++) {
+    i = tasks[next][0];
+    j = tasks[next][1];
+    computeCell(i, j);
+    filled[i][j] = true;
+    next++;
+  }
 
-    // One "task": dot product of row i of A and column j of B.
-    function computeCell(i, j) {
-      let sum = 0;
-      for (let k = 0; k < m; k++) sum += A[i][k] * B[k][j];
-      C[i][j] = sum;
-    }
+  draw(cA, A, rows, cols, [25, 80, 160], 9);
+  redLine(cA, i, true);
+  draw(cB, B, cols, cols, [30, 130, 60], 9);
+  redLine(cB, j, false);
+  draw(cC, C, rows, cols, [200, 40, 20], cols * 81, filled);
 
-    function start() {
-      n = Number(get("rows").value);
-      m = Number(get("cols").value);
-      if (!Number.isInteger(n) || !Number.isInteger(m) || n < 100 || m < 100) {
-        get("error").textContent = "Error: rows and columns must be whole numbers of at least 100.";
-        return;
-      }
-      get("error").textContent = "";
-      get("start").disabled = true;
+  progress.textContent = "done " + next + " / " + tasks.length;
+  current.textContent = "C[" + i + "][" + j + "] = " + C[i][j];
 
-      A = randomMatrix(n, m);
-      B = randomMatrix(m, m);
-      C = Array.from({ length: n }, () => new Array(m).fill(0));
-      const filled = Array.from({ length: n }, () => new Array(m).fill(false));
+  if (next < tasks.length) {
+    requestAnimationFrame(frame);
+  } else {
+    progress.textContent = "Finished - " + tasks.length + " cells calculated";
+    current.textContent = "C[0][0]=" + C[0][0] + "  C[0][1]=" + C[0][1] + "  C[1][0]=" + C[1][0];
+    startBtn.disabled = false;
+    startBtn.textContent = "Run again";
+  }
+}
 
-      queue = [];
-      for (let i = 0; i < n; i++) for (let j = 0; j < m; j++) queue.push([i, j]);
-      done = 0;
-      threadCounts = [0, 0, 0, 0];
-      const total = queue.length;
-      buildThreadBoxes();
-      get("progress").textContent = `Scheduler created ${total} tasks (${n} × ${m}). ${THREADS} worker threads started.`;
+function start() {
+  rows = parseInt(document.getElementById("rows").value);
+  cols = parseInt(document.getElementById("cols").value);
+  if (isNaN(rows) || isNaN(cols) || rows < 100 || cols < 100) {
+    error.textContent = "Rows and columns must be at least 100";
+    return;
+  }
+  error.textContent = "";
+  startBtn.disabled = true;
 
-      drawMatrix(get("canvasA"), A, n, m, [25, 80, 160]);
-      drawMatrix(get("canvasB"), B, m, m, [30, 130, 60]);
-      drawMatrix(get("canvasC"), C, n, m, [200, 40, 20], filled);
+  A = randMatrix(rows, cols);
+  B = randMatrix(cols, cols);
+  C = [];
+  filled = [];
+  tasks = [];
+  for (var i = 0; i < rows; i++) {
+    C.push(new Array(cols).fill(0));
+    filled.push(new Array(cols).fill(false));
+    for (var j = 0; j < cols; j++) tasks.push([i, j]);
+  }
+  next = 0;
+  progress.textContent = "created " + tasks.length + " tasks";
+  requestAnimationFrame(frame);
+}
 
-      running = true;
-      function frame() {
-        const perFrame = Number(get("speed").value);
-        let last = null;
-        for (let s = 0; s < perFrame && queue.length; s++) {
-          const t = done % THREADS;                 // next free worker takes the task
-          const [i, j] = queue.shift();
-          computeCell(i, j);
-          filled[i][j] = true;
-          done++;
-          threadCounts[t]++;
-          last = [i, j, t];
-          get(`task-${t}`).textContent = `C[${i}][${j}]`;
-          get(`task-${t}`).style.color = COLORS[t];
-          get(`count-${t}`).textContent = `${threadCounts[t]} tasks done`;
-        }
-        if (last) {
-          const [i, j, t] = last;
-          drawMarker(get("canvasA"), A, n, m, [25, 80, 160], i, j, true);
-          drawMarker(get("canvasB"), B, m, m, [30, 130, 60], i, j, false);
-          drawMatrix(get("canvasC"), C, n, m, [200, 40, 20], filled);
-          get("progress").textContent = `Completed ${done} / ${total} cells`;
-          get("current").textContent = `Worker Thread ${t} → C[${i}][${j}] = row ${i} of A · column ${j} of B = ${C[i][j]}`;
-        }
-        if (queue.length) {
-          requestAnimationFrame(frame);
-        } else {
-          running = false;
-          for (let t = 0; t < THREADS; t++) get(`task-${t}`).textContent = "finished";
-          get("progress").textContent = `Matrix multiplication completed: ${total} cells calculated.`;
-          get("current").textContent = `C[0][0] = ${C[0][0]}, C[0][1] = ${C[0][1]}, C[1][0] = ${C[1][0]}  (top-left values)`;
-          get("start").disabled = false;
-          get("start").textContent = "Run again";
-        }
-      }
-      requestAnimationFrame(frame);
-    }
-
-    buildThreadBoxes();
-    get("start").addEventListener("click", start);
-  </script>
+document.getElementById("startBtn").onclick = start;
+</script>
 </body>
 </html>
