@@ -1,130 +1,110 @@
-"""Run the matrix multiplication demo in a browser or the console."""
+"""Matrix multiplication using TensorFlow, a task queue, and worker threads."""
 
-print("Starting... TensorFlow may take a few seconds to import.")
-
-import json
 import os
-import sys
+
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+
+import queue
 import threading
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+import time
 
 import numpy as np
-
-import matrix
-from scheduler import Scheduler
-
-PORT = 8000
-FRONTEND = os.path.join(os.path.dirname(__file__), "frontend")
-
-active_scheduler = None
-verification_result = None
-result_sample = None
-demo_is_starting = False
-demo_lock = threading.Lock()
+import tensorflow as tf
 
 
-def run_demo() -> None:
-    """Create two matrices, multiply them, and verify the result."""
-    global active_scheduler, verification_result, result_sample, demo_is_starting
-
-    matrix_a = matrix.create_matrix(matrix.MATRIX_SIZE, matrix.MATRIX_SIZE)
-    matrix_b = matrix.create_matrix(matrix.MATRIX_SIZE, matrix.MATRIX_SIZE)
-    print(f"\nCreated matrices A and B with shape {matrix_a.shape}")
-    print("Top-left 3x3 of A:\n", np.round(matrix_a[:3, :3], 1))
-    print("Top-left 3x3 of B:\n", np.round(matrix_b[:3, :3], 1))
-
-    scheduler = Scheduler(matrix_a, matrix_b)
-    with demo_lock:
-        active_scheduler = scheduler
-        demo_is_starting = False
-    scheduler.run()
-
-    sample = [
-        [round(float(value), 1) for value in row]
-        for row in scheduler.result[:4, :4]
-    ]
-    verified = matrix.check_result(matrix_a, matrix_b, scheduler.result)
-    with demo_lock:
-        result_sample = sample
-        verification_result = verified
-    print(f"Result verified: {verified}")
+MINIMUM_SIZE = 100
+NUMBER_OF_THREADS = 4
 
 
-def start_demo() -> bool:
-    """Start a run unless one is already being prepared or processed."""
-    global active_scheduler, verification_result, result_sample, demo_is_starting
+def read_size(message):
+    """Read one matrix dimension and make sure it is at least 100."""
+    while True:
+        try:
+            value = int(input(message))
+            if value < MINIMUM_SIZE:
+                print("Error: the value must be at least 100.")
+                continue
+            return value
+        except ValueError:
+            print("Error: please enter a whole number.")
 
-    with demo_lock:
-        already_running = demo_is_starting or (
-            active_scheduler is not None and active_scheduler.state == "running"
+
+def worker(thread_number, tasks, matrix_a, matrix_b, matrix_c, print_lock):
+    """Take C[i][j] tasks from the queue until all tasks are finished."""
+    while True:
+        try:
+            row, column = tasks.get_nowait()
+        except queue.Empty:
+            return
+
+        with print_lock:
+            print(f"Thread {thread_number} -> calculating C[{row}][{column}]")
+
+        # C[i][j] is the dot product of row i of A and column j of B.
+        products = tf.multiply(matrix_a[row, :], matrix_b[:, column])
+        matrix_c[row, column] = tf.reduce_sum(products).numpy()
+        tasks.task_done()
+
+
+def multiply_with_threads(matrix_a, matrix_b):
+    """Create one task for every C[i][j] and run four workers."""
+    result_rows = matrix_a.shape[0]
+    result_columns = matrix_b.shape[1]
+    matrix_c = np.zeros((result_rows, result_columns), dtype=np.float32)
+    tasks = queue.Queue()
+
+    for row in range(result_rows):
+        for column in range(result_columns):
+            tasks.put((row, column))
+
+    print(f"\nScheduler created {tasks.qsize()} tasks.\n")
+
+    print_lock = threading.Lock()
+    threads = []
+    for thread_number in range(NUMBER_OF_THREADS):
+        thread = threading.Thread(
+            target=worker,
+            args=(thread_number, tasks, matrix_a, matrix_b, matrix_c, print_lock),
         )
-        if already_running:
-            return False
+        threads.append(thread)
+        thread.start()
 
-        active_scheduler = None
-        verification_result = None
-        result_sample = None
-        demo_is_starting = True
+    for thread in threads:
+        thread.join()
 
-    threading.Thread(target=run_demo, daemon=True).start()
-    return True
+    return matrix_c
 
 
-class DemoRequestHandler(SimpleHTTPRequestHandler):
-    """Serve the frontend and the demo's two JSON endpoints."""
+def main():
+    """Read dimensions, create matrices, schedule the work, and show the result."""
+    rows = read_size("Enter number of rows: ")
+    columns = read_size("Enter number of columns: ")
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, directory=FRONTEND, **kwargs)
+    print("\nCreating matrices using TensorFlow...")
+    # A is rows x columns, B is columns x columns, so C is rows x columns.
+    matrix_a = tf.random.uniform(
+        (rows, columns), minval=1, maxval=10, dtype=tf.int32
+    )
+    matrix_b = tf.random.uniform(
+        (columns, columns), minval=1, maxval=10, dtype=tf.int32
+    )
+    matrix_a = tf.cast(matrix_a, tf.float32)
+    matrix_b = tf.cast(matrix_b, tf.float32)
 
-    def do_GET(self):
-        if self.path == "/api/start":
-            self.send_json({"ok": start_demo()})
-        elif self.path == "/api/progress":
-            with demo_lock:
-                scheduler = active_scheduler
-                verified = verification_result
-                sample = result_sample
+    start_time = time.perf_counter()
+    matrix_c = multiply_with_threads(matrix_a, matrix_b)
+    execution_time = time.perf_counter() - start_time
 
-            if scheduler is None:
-                self.send_json({"state": "idle"})
-            else:
-                data = scheduler.get_progress()
-                data["verified"] = verified
-                data["sample"] = sample
-                self.send_json(data)
-        else:
-            super().do_GET()
+    # Compare against TensorFlow's complete multiplication as a correctness check.
+    expected = tf.matmul(matrix_a, matrix_b).numpy()
+    is_correct = np.allclose(matrix_c, expected)
 
-    def send_json(self, data: dict) -> None:
-        body = json.dumps(data).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, *args):
-        pass
-
-
-def console_test() -> None:
-    run_demo()
-    scheduler = active_scheduler
-    print("\n--- test with 100 x 100 matrices ---")
-    print(f"Rows completed: {scheduler.rows_done} / {matrix.MATRIX_SIZE}")
-    print(f"Total time: {scheduler.total_time:.2f} s (includes demo pauses)")
-    print(f"TensorFlow time: {scheduler.compute_time * 1000:.1f} ms")
-    print("Top-left 4x4 of the result:")
-    for row in result_sample:
-        print(f"  {row}")
-    print("TEST PASSED" if verification_result else "TEST FAILED")
+    print("\nMatrix multiplication completed.")
+    print(f"Execution time: {execution_time:.3f} seconds")
+    print(f"Result verified with tf.matmul: {is_correct}")
+    print("\nTop-left 3 x 3 portion of Matrix C:")
+    print(matrix_c[:3, :3])
 
 
 if __name__ == "__main__":
-    matrix.multiply_rows(matrix.create_matrix(2, 2), matrix.create_matrix(2, 2), 0, 2)
-
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
-        console_test()
-    else:
-        print(f"Server running at http://localhost:{PORT} (Ctrl+C to stop)")
-        ThreadingHTTPServer(("localhost", PORT), DemoRequestHandler).serve_forever()
+    main()
